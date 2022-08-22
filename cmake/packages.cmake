@@ -4,5 +4,5 @@ CPMAddPackage(
     NAME proxy
     VERSION ${PROXY_VERSION}
     GIT_REPOSITORY https://gitlab.com/blrevive/tools/proxy
-    GIT_TAG main
+    GIT_TAG v1.0.0-beta.2
 )
