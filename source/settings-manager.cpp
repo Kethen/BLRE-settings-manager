@@ -119,6 +119,8 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
     Events::ID("FoxProfileSettingsPC", "SetToDefaults"),
         [=](Events::Info info) {
             loadProfileSettings((UFoxProfileSettings*)info.Object, true);
+            // items that gets overlayed during SetToDefaults
+            loadSettings(getPlayerController());
         },
         true
         });
@@ -126,49 +128,27 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
 #endif
 #if 1
     eventManager->RegisterHandler({
-        Events::ID("FoxPC", "OnReadProfileSettingsComplete"),
+        Events::ID("FoxPC", "ReceivedPlayer"),
         [=](Events::Info info) {
             playerController = (AFoxPC*)info.Object;
-            
         },
         true
         });
-    logDebug("registered handler for event FoxPC OnReadProfileSettingsComplete");
+    logDebug("registered handler for event FoxPC ReceivedPlayer");
 #endif
 #if 1
     eventManager->RegisterHandler({
         Events::ID("*", "ei_ApplyChanges"),
         [=](Events::Info info) {
             saveProfileSettings(getPlayerController()->ProfileSettings);
+            // items that reuqires special care
+            saveSettings(info.Object);
         },
         false /*block processing ei_ApplyChanges could freeze*/
         });
     logDebug("registered handler for event * ei_ApplyChanges");
 #endif
 
-#if 0
-    eventManager->RegisterHandler({
-        Events::ID("*", "ei_ApplyChanges"),
-        [=](Events::Info info) {
-            logDebug(std::format("processing {0} ei_ApplyChanges ", info.Object->GetName()));
-            saveSettings(info.Object);
-        },
-        false // cannot blocking process ei_ApplyChanges, it will freeze for some reason
-        });
-    logDebug("registered handler for * ei_ApplyChanges");
-#endif
-#if 0
-    eventManager->RegisterHandler({
-        // inject settings during set to defaults
-        Events::ID("FoxPC", "OnReadProfileSettingsComplete"),
-        [=](Events::Info info) {
-            logDebug("processing FoxPC OnReadProfileSettingsComplete");
-            loadSettings(info.Object);
-        },
-        true
-        });
-    logDebug("registered handler for FoxPC OnReadProfileSettingsComplete");
-#endif
     // dumping events
 #if 0
     eventManager->RegisterHandler({
@@ -190,28 +170,6 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
         true
         });
     logDebug("registered handler for event FoxPC OnReadProfileSettingsComplete");
-#endif
-    // dumping profile settings
-#if 0
-    eventManager->RegisterHandler({
-        Events::ID("FoxProfileSettingsPC", "SetToDefaults"),
-        [=](Events::Info info) {
-            profile = (UFoxProfileSettingsPC*)info.Object;
-            dumpUEProfileSettings(profile);
-        },
-        true
-        });
-    logDebug("registered handler for event FoxProfileSettingsPC SetToDefaults");
-#endif
-#if 0
-    eventManager->RegisterHandler({
-        Events::ID("*", "ei_ApplyChanges"),
-        [=](Events::Info info) {
-            dumpUEProfileSettings(profile);
-        },
-        true
-        });
-    logDebug("registered handler for event FoxProfileSettingsPC SetToDefaults");
 #endif
 }
 
@@ -359,7 +317,7 @@ static void saveSettings(UObject *object) {
     }
 }
 
-static const char* const command_menu_map[] = {
+static const char* const command_list[] = {
         "GBA_Fire",
         "GBA_ToggleZoom",
         "GBA_MoveForward",
@@ -413,6 +371,33 @@ static void loadKeyBindings(AFoxPC* object) {
         return;
     }
 
+    TArray<UFoxDataProvider_KeyBindings *> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
+    for (int i = 0;i < bindings.Num();i++) {
+        UFoxDataProvider_KeyBindings* entry = bindings(i);
+        const char* command = entry->CmdName.ToChar();
+        for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
+            if (strcmp(command, command_list[j]) == 0) {
+                try {
+                    std::string primary = inputJson[command]["primary"];
+                    std::string secondary = inputJson[command]["alternate"];
+                    FName primaryFName(primary.c_str());
+                    FName secondaryFName(secondary.c_str());
+                    logDebug(std::format("inserting keybinds for {0} as {1} and {2}", command, primary, secondary));
+                    entry->DefaultPrimaryKey = primaryFName;
+                    entry->DefaultAlternateKey = secondaryFName;
+                }
+                catch (json::exception e) {
+                    logError(std::format("failed inserting keybinds for {0}",command));
+                    logError("unexpected format in " + outputPath + keybinding_file);
+                    logError(e.what());
+                }
+            }
+        }
+        free((void*)command);
+    }
+    
+#if 0
+    // no good timing to do this
     TArray<FKeyBind> &keybinds = object->MyFoxInput->Bindings;
     for (int i = 0;i < keybinds.Num(); i++) {
         FKeyBind &entry = keybinds(i);
@@ -438,7 +423,7 @@ static void loadKeyBindings(AFoxPC* object) {
         }
         free((void*)command);
     }
-
+#endif
     logDebug("finished loading keybinds");
 }
 
@@ -515,13 +500,22 @@ static void loadProfileSettings(UFoxProfileSettings* object, bool asDefault = fa
             else {
                 target = &object->ProfileSettings;
             }
+            bool found = false;
             for (int j = 0;j < target->Num();j++) {
                 FOnlineProfileSetting& existingEntry = (*target)(j);
                 if (existingEntry.ProfileSetting.PropertyId == entry.ProfileSetting.PropertyId) {
                     logDebug(std::format("inserting data with type ESettingsDataType::{0} and id {1}", entry.ProfileSetting.Data.Type, entry.ProfileSetting.PropertyId));
                     memcpy(&existingEntry, &entry, sizeof(FOnlineProfileSetting));
+                    found = true;
                     break;
                 }
+            }
+            if (!found) {
+#if 0
+                // insertion during blocked processing will block the game it seems
+                logDebug(std::format("existing entry with ESettingsDataType::{0} and id {1} not found, adding", entry.ProfileSetting.Data.Type, entry.ProfileSetting.PropertyId));
+                target->Add(entry);
+#endif
             }
         }
         catch (json::exception e) {
