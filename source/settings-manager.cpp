@@ -34,14 +34,16 @@ static void saveSettings(UObject*);
 static void loadProfileSettings(UFoxProfileSettings*, bool);
 static void saveProfileSettings(UFoxProfileSettings*);
 
-// hooking of this has been tricky, it seems that different setting has to be hooked to different events
 static void loadSettings(UObject*);
 
-static void loadKeyBindings(AFoxPC*);
+static void backupProfileDefaults(UFoxProfileSettings*);
+static void backupKeybindDefaults(AFoxPC*);
+static void restoreDefaults(AFoxPC*);
 
 static void dumpUEKeybinds(AFoxPC*);
-
 static void dumpUEProfileSettings(UFoxProfileSettingsPC*);
+
+static std::string getOutputPath();
 
 static void logError(std::string message) {
     LError("settings-manager: " + message);
@@ -113,13 +115,17 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
     Events::Manager::Link(data->EventManager);
 
     // initialize your module
+    getOutputPath();
     std::shared_ptr<Events::Manager> eventManager = Events::Manager::GetInstance();
+
 #if 1
     eventManager->RegisterHandler({
     Events::ID("FoxProfileSettingsPC", "SetToDefaults"),
         [=](Events::Info info) {
+            backupProfileDefaults((UFoxProfileSettings*)info.Object);
             loadProfileSettings((UFoxProfileSettings*)info.Object, true);
             // items that gets overlayed during SetToDefaults
+            backupKeybindDefaults(getPlayerController());
             loadSettings(getPlayerController());
         },
         true
@@ -135,6 +141,16 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
         true
         });
     logDebug("registered handler for event FoxPC ReceivedPlayer");
+#endif
+#if 1
+    eventManager->RegisterHandler({
+    Events::ID("FoxMenuUI", "ui_ShowPreGameLobby"),
+        [=](Events::Info info) {
+            restoreDefaults(getPlayerController());
+        },
+        false
+        });
+    logDebug("registered handler for event FoxMenuUI ui_ShowPreGameLobby");
 #endif
 #if 1
     eventManager->RegisterHandler({
@@ -361,9 +377,9 @@ static void loadKeyBindings(AFoxPC* object) {
         return;
     }
 
-    json inputJson;
+    json jsonIn;
     try {
-        inputJson = json::parse(input);
+        jsonIn = json::parse(input);
     }
     catch (json::exception e) {
         logError("cannot parse" + outputPath + keybinding_file);
@@ -378,8 +394,8 @@ static void loadKeyBindings(AFoxPC* object) {
         for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
             if (strcmp(command, command_list[j]) == 0) {
                 try {
-                    std::string primary = inputJson[command]["primary"];
-                    std::string secondary = inputJson[command]["alternate"];
+                    std::string primary = jsonIn[command]["primary"];
+                    std::string secondary = jsonIn[command]["alternate"];
                     FName primaryFName(primary.c_str());
                     FName secondaryFName(secondary.c_str());
                     logDebug(std::format("inserting keybinds for {0} as {1} and {2}", command, primary, secondary));
@@ -688,6 +704,81 @@ static void saveProfileSettings(UFoxProfileSettings* object) {
 #endif 
     output << jsonOut.dump(4) << std::endl;
     output.close();
+}
+
+static FKeyBindInfo defaultKeybindings[sizeof(command_list) / sizeof(char*)];
+static void backupKeybindDefaults(AFoxPC* object) {
+    logDebug("backing up default keybindings...");
+    TArray<UFoxDataProvider_KeyBindings*> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
+    for (int i = 0;i < bindings.Num();i++) {
+        UFoxDataProvider_KeyBindings* entry = bindings(i);
+        const char* command = entry->CmdName.ToChar();
+        for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
+            if (strcmp(command, command_list[j]) == 0) {
+                memcpy(&(defaultKeybindings[j].CommandName), &(entry->CmdName), sizeof(FString));
+                memcpy(&(defaultKeybindings[j].PrimaryKey), &(entry->DefaultPrimaryKey), sizeof(FName));
+                memcpy(&(defaultKeybindings[j].AlternateKey), &(entry->DefaultAlternateKey), sizeof(FName));
+                break;
+            }
+        }
+        free((void*)command);
+    }
+}
+
+static void restoreKeybindDefaults(AFoxPC* object) {
+    logDebug("restoring default keybindings...");
+    TArray<UFoxDataProvider_KeyBindings*> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
+    for (int i = 0;i < bindings.Num();i++) {
+        UFoxDataProvider_KeyBindings* entry = bindings(i);
+        const char* command = entry->CmdName.ToChar();
+        for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
+            if (strcmp(command, command_list[j]) == 0) {
+                memcpy(&(entry->CmdName), &(defaultKeybindings[j].CommandName), sizeof(FString));
+                memcpy(&(entry->DefaultPrimaryKey), &(defaultKeybindings[j].PrimaryKey), sizeof(FName));
+                memcpy(&(entry->DefaultAlternateKey), &(defaultKeybindings[j].AlternateKey), sizeof(FName));
+                break;
+            }
+        }
+        free((void*)command);
+    }
+}
+
+static UFoxProfileSettings *profileSettingsRef = nullptr;
+static FOnlineProfileSetting* profileDefaults = nullptr;
+static int numProfileDefaults = 0;
+static void backupProfileDefaults(UFoxProfileSettings* object) {
+    if (profileDefaults != nullptr) {
+        return;
+    }
+    profileSettingsRef = object;
+    logDebug("backing up default profile settings...");
+    numProfileDefaults = object->DefaultSettings.Num();
+    profileDefaults = new FOnlineProfileSetting[numProfileDefaults];
+    for (int i = 0;i < numProfileDefaults; i++) {
+        FOnlineProfileSetting& entry = object->DefaultSettings(i);
+        memcpy(&(profileDefaults[i]), &entry, sizeof(FOnlineProfileSetting));
+    }
+}
+
+static void restoreProfileDefaults(UFoxProfileSettings* object) {
+    if (profileDefaults == nullptr || object == nullptr) {
+        return;
+    }
+    logDebug("restoring default profile settings...");
+    for (int i = 0;i < numProfileDefaults; i++) {
+        for (int j = 0;j < profileSettingsRef->DefaultSettings.Num();j++) {
+            FOnlineProfileSetting& entry = profileSettingsRef->DefaultSettings(j);
+            if (profileDefaults[i].ProfileSetting.PropertyId == entry.ProfileSetting.PropertyId) {
+                memcpy(&entry, &(profileDefaults[i]), sizeof(FOnlineProfileSetting));
+                break;
+            }
+        }
+    }
+}
+
+static void restoreDefaults(AFoxPC* object) {
+    restoreKeybindDefaults(object);
+    restoreProfileDefaults(object->ProfileSettings);
 }
 
 static void dumpUEKeybinds(AFoxPC* object) {
