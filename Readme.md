@@ -1,30 +1,41 @@
-BLRevive Module Skeleton providing quick start environment setup to develop custom BLRevive Modules.
+BLRevive module for saving and loading user settings
 
 ## features
 
-- modern preconfigured cmake script for windows environment
-- basic skeleton for BLRevive Module
-- uses [CPM]() for easy package management
-  
-## prerequisites
+- save and load integer settings and keybinds
+
+## install and usage
+
+first make sure proxy.dll is ready and is capable of loading modules: https://gitlab.com/blrevive/tools/proxy
+
+install `settings-manager.dll` to `<blr>/Binaries/Win32/Modules/`
+
+change `<blr>/FoxGame/Config/BLRevive/default.json` to load settings-manager on client
+
+for example:
+```
+{
+  "Proxy": {
+    "Server": {
+      "Host": "127.0.0.1",
+      "Port": "+1"
+    },
+    "Modules": {
+      "Server": [  ],
+      "Client": [ "settings-manager" ]
+    }
+  }
+}
+```
+
+settings are saved under `<blr>/FoxGame/Config/BLRevive/settings_manager_<player_name>`, invalid modifications to json dumps might crash the game during loading
+
+## building prerequisites
 
 In order to succesfully compile and run the module you need the following applications:
 
-- Visual Studio 2019 (with C++/MSVC)
+- Visual Studio 2019/2022 (with C++/MSVC)
 - patched Blacklight: Retribution installation
-
-## setup
-
-In order to setup a new BLRevive Module project follow these steps:
-
-1. clone this repository 
-   > `git clone https://gitlab.com/blrevive/modules/skeleton.git <module-name>`
-2. run setup script
-   > `./setup.ps1 <ModuleName>`
-3. remove setup script
-   > `rm setup.ps1`
-
-*Don't forget to initialize your git repository before making changes!*
 
 ## building
 > Because Blacklight: Retribution itself is compiled for Win32, the modules target that platform too and only that one. It may be possible to compile the modules for another platform but there is no point in doing so.
@@ -45,7 +56,7 @@ In order to setup a new BLRevive Module project follow these steps:
 
 ## compiling
 
-Use `build/<ModuleName>.sln` to compile the module with VS 2019.
+Use `build/settings-manager.sln` to compile the module with VS 2019/2022.
 The solution offers the following targets:
 
 | target | description |
