@@ -588,7 +588,7 @@ static void loadProfileSettings(UFoxProfileSettings* object, bool asDefault = fa
                 *(int64_t*)&entry.ProfileSetting.Data.Value1 = it.value()["ProfileSetting"]["Data"]["Value1"];
             }
             else if (entry.ProfileSetting.Data.Type == ESettingsDataType::SDT_String || entry.ProfileSetting.Data.Type == ESettingsDataType::SDT_Blob) {
-                logError("SDT_String and SDT_Blob are currently not supported");
+                logError(std::format("SDT_String and SDT_Blob are currently not supported, skipping property id {0} restore", entry.ProfileSetting.PropertyId));
                 continue;
             }
             else {
@@ -715,7 +715,7 @@ static void saveProfileSettings(UFoxProfileSettings* object) {
             jsonOut[j]["ProfileSetting"]["Data"]["Value1"] = *(int64_t *)(&entry.ProfileSetting.Data.Value1);
         }
         else if (entry.ProfileSetting.Data.Type == ESettingsDataType::SDT_String || entry.ProfileSetting.Data.Type == ESettingsDataType::SDT_Blob) {
-            logError("SDT_String and SDT_Blob is currently not supported");
+            logError(std::format("SDT_String and SDT_Blob are currently not supported, skipping property id {0} saving", entry.ProfileSetting.PropertyId));
             continue;
 #if 0
             // no idea how to deal with FPointer from here, wish the setters and getters would just work
