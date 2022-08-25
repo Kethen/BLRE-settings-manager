@@ -30,6 +30,7 @@ using namespace BLRevive;
 
 // this assumes single thread execution from the lazy event runner, set up locks if this changes
 static void saveSettings(UObject*);
+static void saveKeyBindingsFromCache();
 
 static void loadProfileSettings(UFoxProfileSettings*, bool);
 static void saveProfileSettings(UFoxProfileSettings*);
@@ -45,6 +46,55 @@ static void dumpUEProfileSettings(UFoxProfileSettingsPC*);
 
 static std::string getOutputPath();
 
+static const char* const command_list[] = {
+        "GBA_Fire",
+        "GBA_ToggleZoom",
+        "GBA_MoveForward",
+        "GBA_MoveBackward",
+        "GBA_StrafeLeft",
+        "GBA_StrafeRight",
+        "GBA_Sprint",
+        "GBA_ToggleVisor",
+        "GBA_Melee",
+        "GBA_PickupWeapon",
+        "GBA_Reload",
+        "GBA_HoldCrouch",
+        "GBA_Jump",
+        "GBA_UseObject",
+        "GBA_SelectPrimaryWeapon",
+        "GBA_SelectSecondaryWeapon",
+        "GBA_SelectTactical",
+        "GBA_LastWeapon",
+        "GBA_NextWeapon",
+        "GBA_PrevWeapon",
+        "GBA_SwitchGear1",
+        "GBA_SwitchGear2",
+        "GBA_SwitchGear3",
+        "GBA_SwitchGear4",
+        "GBA_Taunt",
+        "GBA_Chat",
+        "GBA_QuickGear"
+};
+
+static const std::string keybinding_file = "\\keybinding.json";
+static const std::string profile_file = "\\UE3_online_profile.json";
+
+struct keybindCacheEntry {
+    const char *command;
+    std::string primary;
+    std::string alternate;
+};
+
+static keybindCacheEntry keybindCache[sizeof(command_list) / sizeof(char*)];
+static bool keybindCachePopulated = false;
+static bool settingsModified = false;
+static bool keybindingsLoaded = false;
+static bool profileSettingsLoaded = false;
+static AFoxPC* playerController = nullptr;
+static FOnlineProfileSetting* profileDefaults = nullptr;
+static int numProfileDefaults = 0;
+static FKeyBindInfo defaultKeybindings[sizeof(command_list) / sizeof(char*)];
+
 static void logError(std::string message) {
     LError("settings-manager: " + message);
     LFlush;
@@ -55,7 +105,6 @@ static void logDebug(std::string message) {
     LFlush;
 }
 
-static AFoxPC* playerController = nullptr;
 static AFoxPC* getPlayerController() {
     while (playerController == nullptr) {
         // copied from loadout manager, I don't understand why the player name "Player" is treated differently
@@ -78,9 +127,6 @@ static AFoxPC* getPlayerController() {
 }
 
 
-static const std::string keybinding_file = "\\keybinding.json";
-static const std::string profile_file = "\\UE3_online_profile.json";
-
 /// <summary>
 /// Thread thats specific to the module (function must exist and export demangled!)
 /// </summary>
@@ -91,6 +137,8 @@ extern "C" __declspec(dllexport) void ModuleThread()
         return;
     }
 }
+
+
 
 /// <summary>
 /// Module initializer (function must exist and export demangled!)
@@ -159,11 +207,27 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
             saveProfileSettings(getPlayerController()->ProfileSettings);
             // items that reuqires special care
             saveSettings(info.Object);
+            settingsModified = true;
         },
         false /*block processing ei_ApplyChanges could freeze*/
         });
     logDebug("registered handler for event * ei_ApplyChanges");
 #endif
+#if 1
+    eventManager->RegisterHandler({
+        Events::ID("FoxUI", "ei_menuTransitionComplete"),
+        [=](Events::Info info) {
+            if (settingsModified) {
+                logDebug("performing periodic settings saving");
+                saveProfileSettings(getPlayerController()->ProfileSettings);
+                saveKeyBindingsFromCache();
+            }
+        },
+        false
+        });
+    logDebug("registered handler for event FoxUI ei_menuTransitionComplete");
+#endif
+
 
     // dumping events
 #if 0
@@ -278,19 +342,30 @@ static void saveControls(UFoxSettingsUIControls *object) {
     logDebug("saving control settings...");
 }
 
-static void saveKeyBindings(UFoxSettingsUIKeyBindings *object) {
-    logDebug("saving keybinds...");
-
-    json jsonOut;
+static void saveKeyBindingsToCache(UFoxSettingsUIKeyBindings* object) {
+    logDebug("populating keybind cache...");
     TArray<struct FKeyBindInfo> keybinds = object->CurrentKeyBindings;
     for (int i = 0;i < keybinds.Num();i++) {
-        struct FKeyBindInfo keybind = keybinds(i);
+        FKeyBindInfo &keybind = keybinds(i);
         const char* command = keybind.CommandName.ToChar();
-        jsonOut[command]["primary"] = keybind.PrimaryKey.GetName();
-        jsonOut[command]["alternate"] = keybind.AlternateKey.GetName();
+        for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
+            if (strcmp(command, command_list[j]) == 0) {
+                keybindCache[j].command = command_list[j];
+                keybindCache[j].primary = std::string(keybind.PrimaryKey.GetName());
+                keybindCache[j].alternate = std::string(keybind.AlternateKey.GetName());
+                break;
+            }
+        }
         free((void*)command);
     }
+    keybindCachePopulated = true;
+}
 
+static void saveKeyBindingsFromCache() {
+    logDebug("saving keybind cache to disk...");
+    if (!keybindCachePopulated) {
+        return;
+    }
     std::string outputPath = getOutputPath();
     if (outputPath.length() == 0) {
         logError("failed saving keybinds");
@@ -303,8 +378,20 @@ static void saveKeyBindings(UFoxSettingsUIKeyBindings *object) {
         logError("failed saving keybinds");
         return;
     }
+
+    json jsonOut;
+    for (int i = 0;i < sizeof(command_list) / sizeof(char*);i++) {
+        jsonOut[keybindCache[i].command]["primary"] = keybindCache[i].primary;
+        jsonOut[keybindCache[i].command]["alternate"] = keybindCache[i].alternate;
+    }
+
     output << jsonOut.dump(4) << std::endl;
     output.close();
+}
+
+static void saveKeyBindings(UFoxSettingsUIKeyBindings *object) {
+    saveKeyBindingsToCache(object);
+    saveKeyBindingsFromCache();
 }
 
 static void saveSettings(UObject *object) {
@@ -333,35 +420,6 @@ static void saveSettings(UObject *object) {
     }
 }
 
-static const char* const command_list[] = {
-        "GBA_Fire",
-        "GBA_ToggleZoom",
-        "GBA_MoveForward",
-        "GBA_MoveBackward",
-        "GBA_StrafeLeft",
-        "GBA_StrafeRight",
-        "GBA_Sprint",
-        "GBA_ToggleVisor",
-        "GBA_Melee",
-        "GBA_PickupWeapon",
-        "GBA_Reload",
-        "GBA_HoldCrouch",
-        "GBA_Jump",
-        "GBA_UseObject",
-        "GBA_SelectPrimaryWeapon",
-        "GBA_SelectSecondaryWeapon",
-        "GBA_SelectTactical",
-        "GBA_LastWeapon",
-        "GBA_NextWeapon",
-        "GBA_PrevWeapon",
-        "GBA_SwitchGear1",
-        "GBA_SwitchGear2",
-        "GBA_SwitchGear3",
-        "GBA_SwitchGear4",
-        "GBA_Taunt",
-        "GBA_Chat",
-        "GBA_QuickGear"
-};
 
 static void loadKeyBindings(AFoxPC* object) {
     logDebug("loading keybinds...");
@@ -441,6 +499,7 @@ static void loadKeyBindings(AFoxPC* object) {
         free((void*)command);
     }
 #endif
+    keybindingsLoaded = true;
     logDebug("finished loading keybinds");
 }
 
@@ -454,6 +513,7 @@ static void loadSettings(UObject* object) {
         logDebug(std::format("ignoring unexpected event from {0}", objectName));
     }
 }
+
 
 static void loadProfileSettings(UFoxProfileSettings* object, bool asDefault = false) {
     if (asDefault) {
@@ -592,6 +652,8 @@ static void loadProfileSettings(UFoxProfileSettings* object, bool asDefault = fa
         }
     }
 #endif
+    profileSettingsLoaded = true;
+    logDebug("profile settings loaded");
 }
 
 static void saveProfileSettings(UFoxProfileSettings* object) {
@@ -706,7 +768,6 @@ static void saveProfileSettings(UFoxProfileSettings* object) {
     output.close();
 }
 
-static FKeyBindInfo defaultKeybindings[sizeof(command_list) / sizeof(char*)];
 static void backupKeybindDefaults(AFoxPC* object) {
     logDebug("backing up default keybindings...");
     TArray<UFoxDataProvider_KeyBindings*> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
@@ -726,6 +787,10 @@ static void backupKeybindDefaults(AFoxPC* object) {
 }
 
 static void restoreKeybindDefaults(AFoxPC* object) {
+    // only restore if it was ever loaded, memory quirk
+    if (!keybindingsLoaded) {
+        return;
+    }
     logDebug("restoring default keybindings...");
     TArray<UFoxDataProvider_KeyBindings*> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
     for (int i = 0;i < bindings.Num();i++) {
@@ -743,14 +808,10 @@ static void restoreKeybindDefaults(AFoxPC* object) {
     }
 }
 
-static UFoxProfileSettings *profileSettingsRef = nullptr;
-static FOnlineProfileSetting* profileDefaults = nullptr;
-static int numProfileDefaults = 0;
 static void backupProfileDefaults(UFoxProfileSettings* object) {
     if (profileDefaults != nullptr) {
         return;
     }
-    profileSettingsRef = object;
     logDebug("backing up default profile settings...");
     numProfileDefaults = object->DefaultSettings.Num();
     profileDefaults = new FOnlineProfileSetting[numProfileDefaults];
@@ -761,13 +822,14 @@ static void backupProfileDefaults(UFoxProfileSettings* object) {
 }
 
 static void restoreProfileDefaults(UFoxProfileSettings* object) {
-    if (profileDefaults == nullptr || object == nullptr) {
+    // only restore if it was ever loaded, memory quirk
+    if (profileDefaults == nullptr || object == nullptr || !profileSettingsLoaded) {
         return;
     }
     logDebug("restoring default profile settings...");
     for (int i = 0;i < numProfileDefaults; i++) {
-        for (int j = 0;j < profileSettingsRef->DefaultSettings.Num();j++) {
-            FOnlineProfileSetting& entry = profileSettingsRef->DefaultSettings(j);
+        for (int j = 0;j < object->DefaultSettings.Num();j++) {
+            FOnlineProfileSetting& entry = object->DefaultSettings(j);
             if (profileDefaults[i].ProfileSetting.PropertyId == entry.ProfileSetting.PropertyId) {
                 memcpy(&entry, &(profileDefaults[i]), sizeof(FOnlineProfileSetting));
                 break;
