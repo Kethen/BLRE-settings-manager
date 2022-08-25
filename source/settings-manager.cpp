@@ -94,6 +94,8 @@ static AFoxPC* playerController = nullptr;
 static FOnlineProfileSetting* profileDefaults = nullptr;
 static int numProfileDefaults = 0;
 static FKeyBindInfo defaultKeybindings[sizeof(command_list) / sizeof(char*)];
+static int periodicSaves = 0;
+static bool defaultRestored = false;
 
 static void logError(std::string message) {
     LError("settings-manager: " + message);
@@ -202,12 +204,23 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
 #endif
 #if 1
     eventManager->RegisterHandler({
+    Events::ID("FoxMenuUI", "ui_ShowIntermissionLobby"),
+        [=](Events::Info info) {
+            restoreDefaults(getPlayerController());
+        },
+        false
+        });
+    logDebug("registered handler for event FoxMenuUI ui_ShowIntermissionLobby");
+#endif
+#if 1
+    eventManager->RegisterHandler({
         Events::ID("*", "ei_ApplyChanges"),
         [=](Events::Info info) {
             saveProfileSettings(getPlayerController()->ProfileSettings);
             // items that reuqires special care
             saveSettings(info.Object);
             settingsModified = true;
+            periodicSaves = 0;
         },
         false /*block processing ei_ApplyChanges could freeze*/
         });
@@ -215,19 +228,33 @@ extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::I
 #endif
 #if 1
     eventManager->RegisterHandler({
+        Events::ID("*", "PromptResetToDefaults"),
+        [=](Events::Info info) {
+            saveProfileSettings(getPlayerController()->ProfileSettings);
+            // items that reuqires special care
+            saveSettings(info.Object);
+            settingsModified = true;
+            periodicSaves = 0;
+        },
+        false /*block processing ei_ResetToDefaults could freeze*/
+        });
+    logDebug("registered handler for event * PromptResetToDefaults");
+#endif
+#if 1
+    eventManager->RegisterHandler({
         Events::ID("FoxUI", "ei_menuTransitionComplete"),
         [=](Events::Info info) {
-            if (settingsModified) {
+            if (settingsModified && periodicSaves < 3) {
                 logDebug("performing periodic settings saving");
                 saveProfileSettings(getPlayerController()->ProfileSettings);
                 saveKeyBindingsFromCache();
+                periodicSaves++;
             }
         },
         false
         });
     logDebug("registered handler for event FoxUI ei_menuTransitionComplete");
 #endif
-
 
     // dumping events
 #if 0
@@ -839,8 +866,11 @@ static void restoreProfileDefaults(UFoxProfileSettings* object) {
 }
 
 static void restoreDefaults(AFoxPC* object) {
-    restoreKeybindDefaults(object);
-    restoreProfileDefaults(object->ProfileSettings);
+    if (!defaultRestored) {
+        restoreKeybindDefaults(object);
+        restoreProfileDefaults(object->ProfileSettings);
+    }
+    defaultRestored = true;
 }
 
 static void dumpUEKeybinds(AFoxPC* object) {
