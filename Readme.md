@@ -4,6 +4,11 @@ BLRevive module for saving and loading user settings
 
 - save and load integer settings and keybinds
 
+## runtime prerequisites
+
+- on windows, vcrun 2015 x86 has to be installed (vcrun 143) for Proxy.dll to load correctly
+- recent versions of wine should be able to run it without installing msvc, do `winetricks vcrun2015` if that's not the case
+
 ## install and usage
 
 first make sure proxy.dll is ready and is capable of loading modules: https://gitlab.com/blrevive/tools/proxy
@@ -41,7 +46,7 @@ In order to succesfully compile and run the module you need the following applic
 > Because Blacklight: Retribution itself is compiled for Win32, the modules target that platform too and only that one. It may be possible to compile the modules for another platform but there is no point in doing so.
 
 1. start VS developer shell inside project
-2. run `cmake -A Win32 -B build/` to generate build files for VS 2019 / Win32
+2. run `cmake -A Win32 -B build/` to generate build files for VS 2019/2022 / Win32
 3. configure debugging feature with cmake options (see below)
 
 ### cmake options
