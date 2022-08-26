@@ -146,13 +146,13 @@ extern "C" __declspec(dllexport) void ModuleThread()
 /// Module initializer (function must exist and export demangled!)
 /// </summary>
 /// <param name="data"></param>
-extern "C" __declspec(dllexport) void InitializeModule(std::shared_ptr<Module::InitData> data)
+extern "C" __declspec(dllexport) void InitializeModule(Module::InitData *data)
 {
     if (Utils::IsServer()) {
         return;
     }
     // check param validity
-    if (!data || !data->EventManager || !data->Logger) {
+    if (!data->EventManager || !data->Logger) {
         LError("module initializer param was null!"); LFlush;
         return;
     }
