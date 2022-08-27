@@ -91,6 +91,7 @@ static bool settingsModified = false;
 static bool keybindingsLoaded = false;
 static bool profileSettingsLoaded = false;
 static AFoxPC* playerController = nullptr;
+static UFoxProfileSettings *playerProfile = nullptr;
 static FOnlineProfileSetting* profileDefaults = nullptr;
 static int numProfileDefaults = 0;
 static FKeyBindInfo defaultKeybindings[sizeof(command_list) / sizeof(char*)];
@@ -138,34 +139,7 @@ extern "C" __declspec(dllexport) void ModuleThread()
     if (Utils::IsServer()) {
         return;
     }
-}
 
-
-
-/// <summary>
-/// Module initializer (function must exist and export demangled!)
-/// </summary>
-/// <param name="data"></param>
-extern "C" __declspec(dllexport) void InitializeModule(Module::InitData *data)
-{
-    if (Utils::IsServer()) {
-        return;
-    }
-    // check param validity
-    if (!data->EventManager || !data->Logger) {
-        LError("module initializer param was null!"); LFlush;
-        return;
-    }
-
-    // initialize logger (to enable logging to the same file)
-    Logger::Link(data->Logger);
-
-    // initialize event manager
-    // an instance of the manager can be retrieved with Events::Manager::Instance() afterwards
-    Events::Manager::Link(data->EventManager);
-
-    // initialize your module
-    getOutputPath();
     std::shared_ptr<Events::Manager> eventManager = Events::Manager::GetInstance();
 
 #if 1
@@ -177,6 +151,7 @@ extern "C" __declspec(dllexport) void InitializeModule(Module::InitData *data)
             // items that gets overlayed during SetToDefaults
             backupKeybindDefaults(getPlayerController());
             loadSettings(getPlayerController());
+            playerProfile = (UFoxProfileSettings*)info.Object;
         },
         true
         });
@@ -278,6 +253,35 @@ extern "C" __declspec(dllexport) void InitializeModule(Module::InitData *data)
         });
     logDebug("registered handler for event FoxPC OnReadProfileSettingsComplete");
 #endif
+}
+
+
+
+/// <summary>
+/// Module initializer (function must exist and export demangled!)
+/// </summary>
+/// <param name="data"></param>
+extern "C" __declspec(dllexport) void InitializeModule(Module::InitData *data)
+{
+    if (Utils::IsServer()) {
+        return;
+    }
+    // check param validity
+    if (!data->EventManager || !data->Logger) {
+        LError("module initializer param was null!"); LFlush;
+        return;
+    }
+
+    // initialize logger (to enable logging to the same file)
+    Logger::Link(data->Logger);
+
+    // initialize event manager
+    // an instance of the manager can be retrieved with Events::Manager::Instance() afterwards
+    Events::Manager::Link(data->EventManager);
+
+    // initialize your module
+    getOutputPath();
+
 }
 
 BOOL APIENTRY DllMain( HMODULE hModule,
@@ -497,7 +501,7 @@ static void loadKeyBindings(AFoxPC* object) {
         }
         free((void*)command);
     }
-    
+
 #if 0
     // no good timing to do this
     TArray<FKeyBind> &keybinds = object->MyFoxInput->Bindings;
@@ -868,7 +872,8 @@ static void restoreProfileDefaults(UFoxProfileSettings* object) {
 static void restoreDefaults(AFoxPC* object) {
     if (!defaultRestored) {
         restoreKeybindDefaults(object);
-        restoreProfileDefaults(object->ProfileSettings);
+        //restoreProfileDefaults(object->ProfileSettings);
+        restoreProfileDefaults(playerProfile);
     }
     defaultRestored = true;
 }
