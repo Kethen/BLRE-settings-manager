@@ -1,4 +1,4 @@
-set(PROXY_VERSION "0.0.1" CACHE STRING "version of the proxy library")
+set(PROXY_VERSION "v1.0.0-beta.2" CACHE STRING "version of the proxy library")
 
 CPMAddPackage(
     NAME proxy

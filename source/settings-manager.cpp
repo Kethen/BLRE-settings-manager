@@ -15,7 +15,7 @@
 #include <Proxy/Events.h>
 // for access to client/server
 #include <Proxy/Network.h>
-// for module api 
+// for module api
 #include <Proxy/Modules.h>
 // for logging in main file
 #include <Proxy/Logger.h>
@@ -85,16 +85,24 @@ struct keybindCacheEntry {
     std::string alternate;
 };
 
+struct profileSettingBackupEntry {
+    char setting[sizeof(FOnlineProfileSetting)];
+};
+
+struct keybindBackupEntry {
+    char primary[sizeof(FName)];
+    char alternate[sizeof(FName)];
+};
+
 static keybindCacheEntry keybindCache[sizeof(command_list) / sizeof(char*)];
 static bool keybindCachePopulated = false;
 static bool settingsModified = false;
 static bool keybindingsLoaded = false;
 static bool profileSettingsLoaded = false;
 static AFoxPC* playerController = nullptr;
-static UFoxProfileSettings *playerProfile = nullptr;
-static FOnlineProfileSetting* profileDefaults = nullptr;
+static profileSettingBackupEntry* profileDefaults = nullptr;
 static int numProfileDefaults = 0;
-static FKeyBindInfo defaultKeybindings[sizeof(command_list) / sizeof(char*)];
+static keybindBackupEntry defaultKeybindings[sizeof(command_list) / sizeof(char*)];
 static int periodicSaves = 0;
 static bool defaultRestored = false;
 
@@ -151,7 +159,6 @@ extern "C" __declspec(dllexport) void ModuleThread()
             // items that gets overlayed during SetToDefaults
             backupKeybindDefaults(getPlayerController());
             loadSettings(getPlayerController());
-            playerProfile = (UFoxProfileSettings*)info.Object;
         },
         true
         });
@@ -522,6 +529,7 @@ static void loadKeyBindings(AFoxPC* object) {
                 catch (json::exception e) {
                     logError("unexpected format in " + outputPath + keybinding_file);
                     logError(e.what());
+                    free((void*)command);
                     return;
                 }
                 break;
@@ -738,10 +746,9 @@ static void saveProfileSettings(UFoxProfileSettings* object) {
     }
 #if 0
     // this allows one save, then the profile can no longer be accessed this way??
-    
     for (int i = 0;i < object->ProfileSettingIds.Num();i++) {
         int id = object->ProfileSettingIds(i);
-        
+
         FName refName = object->GetProfileSettingName(id);
         const char* refNameStr = refName.GetName();
         int valueInt;
@@ -801,15 +808,14 @@ static void saveProfileSettings(UFoxProfileSettings* object) {
 
 static void backupKeybindDefaults(AFoxPC* object) {
     logDebug("backing up default keybindings...");
-    TArray<UFoxDataProvider_KeyBindings*> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
+    TArray<UUIResourceDataProvider*> bindings = object->GetMenuItemsDataStore()->KeyBindingProviders;
     for (int i = 0;i < bindings.Num();i++) {
-        UFoxDataProvider_KeyBindings* entry = bindings(i);
+        UFoxDataProvider_KeyBindings *entry = (UFoxDataProvider_KeyBindings *)bindings(i);
         const char* command = entry->CmdName.ToChar();
         for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
             if (strcmp(command, command_list[j]) == 0) {
-                memcpy(&(defaultKeybindings[j].CommandName), &(entry->CmdName), sizeof(FString));
-                memcpy(&(defaultKeybindings[j].PrimaryKey), &(entry->DefaultPrimaryKey), sizeof(FName));
-                memcpy(&(defaultKeybindings[j].AlternateKey), &(entry->DefaultAlternateKey), sizeof(FName));
+                memcpy(defaultKeybindings[j].primary, &(entry->DefaultPrimaryKey), sizeof(FName));
+                memcpy(defaultKeybindings[j].alternate, &(entry->DefaultAlternateKey), sizeof(FName));
                 break;
             }
         }
@@ -823,15 +829,14 @@ static void restoreKeybindDefaults(AFoxPC* object) {
         return;
     }
     logDebug("restoring default keybindings...");
-    TArray<UFoxDataProvider_KeyBindings*> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
+    TArray<UUIResourceDataProvider*> bindings = object->GetMenuItemsDataStore()->KeyBindingProviders;
     for (int i = 0;i < bindings.Num();i++) {
-        UFoxDataProvider_KeyBindings* entry = bindings(i);
+        UFoxDataProvider_KeyBindings* entry = (UFoxDataProvider_KeyBindings *)bindings(i);
         const char* command = entry->CmdName.ToChar();
         for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
             if (strcmp(command, command_list[j]) == 0) {
-                memcpy(&(entry->CmdName), &(defaultKeybindings[j].CommandName), sizeof(FString));
-                memcpy(&(entry->DefaultPrimaryKey), &(defaultKeybindings[j].PrimaryKey), sizeof(FName));
-                memcpy(&(entry->DefaultAlternateKey), &(defaultKeybindings[j].AlternateKey), sizeof(FName));
+                memcpy(&(entry->DefaultPrimaryKey), defaultKeybindings[j].primary, sizeof(FName));
+                memcpy(&(entry->DefaultAlternateKey), defaultKeybindings[j].alternate, sizeof(FName));
                 break;
             }
         }
@@ -845,10 +850,10 @@ static void backupProfileDefaults(UFoxProfileSettings* object) {
     }
     logDebug("backing up default profile settings...");
     numProfileDefaults = object->DefaultSettings.Num();
-    profileDefaults = new FOnlineProfileSetting[numProfileDefaults];
+    profileDefaults = new profileSettingBackupEntry[numProfileDefaults];
     for (int i = 0;i < numProfileDefaults; i++) {
         FOnlineProfileSetting& entry = object->DefaultSettings(i);
-        memcpy(&(profileDefaults[i]), &entry, sizeof(FOnlineProfileSetting));
+        memcpy(profileDefaults[i].setting, &entry, sizeof(FOnlineProfileSetting));
     }
 }
 
@@ -859,10 +864,11 @@ static void restoreProfileDefaults(UFoxProfileSettings* object) {
     }
     logDebug("restoring default profile settings...");
     for (int i = 0;i < numProfileDefaults; i++) {
+        FOnlineProfileSetting *backup = (FOnlineProfileSetting *)profileDefaults[i].setting;
         for (int j = 0;j < object->DefaultSettings.Num();j++) {
             FOnlineProfileSetting& entry = object->DefaultSettings(j);
-            if (profileDefaults[i].ProfileSetting.PropertyId == entry.ProfileSetting.PropertyId) {
-                memcpy(&entry, &(profileDefaults[i]), sizeof(FOnlineProfileSetting));
+            if (backup->ProfileSetting.PropertyId == entry.ProfileSetting.PropertyId) {
+                memcpy(&entry, backup, sizeof(FOnlineProfileSetting));
                 break;
             }
         }
@@ -872,8 +878,7 @@ static void restoreProfileDefaults(UFoxProfileSettings* object) {
 static void restoreDefaults(AFoxPC* object) {
     if (!defaultRestored) {
         restoreKeybindDefaults(object);
-        //restoreProfileDefaults(object->ProfileSettings);
-        restoreProfileDefaults(playerProfile);
+        restoreProfileDefaults(object->ProfileSettings);
     }
     defaultRestored = true;
 }
