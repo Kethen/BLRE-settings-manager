@@ -6,7 +6,7 @@ BLRevive module for saving and loading user settings
 
 ## runtime prerequisites
 
-- on windows, vcrun 2015 x86 has to be installed (vcrun 143) for Proxy.dll to load correctly
+- on windows, vcrun 2015 x86 has to be installed (vcrun 140) for Proxy.dll to load correctly, you can find it at https://www.microsoft.com/en-us/download/details.aspx?id=52685
 - recent versions of wine should be able to run it without installing msvc, do `winetricks vcrun2015` if that's not the case
 
 ## install and usage
