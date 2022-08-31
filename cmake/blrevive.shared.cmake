@@ -1,3 +1,13 @@
+# adjust configuration types to either
+#   - Server: Debug/x86; Starts BLR server in debugger
+#   - Client: Debug/x86; Starts BLR client in debugger
+#   - Release: Release/x86; Compile for release
+    set(CMAKE_SHARED_LINKER_FLAGS_SERVER ${CMAKE_SHARED_LINKER_FLAGS_DEBUG})
+    set(CMAKE_SHARED_LINKER_FLAGS_CLIENT ${CMAKE_SHARED_LINKER_FLAGS_DEBUG})
+    set(CMAKE_SHARED_LINKER_FLAGS_RELEASE ${CMAKE_SHARED_LINKER_FLAGS_DEBUG})
+    set(CMAKE_CONFIGURATION_TYPES Server Client Release)
+    set(CMAKE_CONFIGURATION_TYPES ${CMAKE_CONFIGURATION_TYPES} CACHE STRING "Append user-defined configuration to list of configurations to make it usable in Visual Studio" FORCE)
+
 # install dependencies with cpm
 include(cmake/CPM.cmake)
 include(cmake/packages.cmake)
@@ -49,17 +59,6 @@ endif()
 # include user config override if exists
 if(EXISTS "${PROJECT_SOURCE_DIR}/blrevive.config.cmake")
     include("${PROJECT_SOURCE_DIR}/blrevive.config.cmake")
-endif()
-
-# adjust configuration types to either
-#   - Server: Debug/x86; Starts BLR server in debugger
-#   - Client: Debug/x86; Starts BLR client in debugger
-#   - Release: Release/x86; Compile for release
-if(CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_SHARED_LINKER_FLAGS_SERVER ${CMAKE_SHARED_LINKER_FLAGS_DEBUG})
-    set(CMAKE_SHARED_LINKER_FLAGS_CLIENT ${CMAKE_SHARED_LINKER_FLAGS_DEBUG})
-    set(CMAKE_CONFIGURATION_TYPES Server Client Release)
-    set(CMAKE_CONFIGURATION_TYPES ${CMAKE_CONFIGURATION_TYPES} CACHE STRING "Append user-defined configuration to list of configurations to make it usable in Visual Studio" FORCE)
 endif()
 
 # create header and source file lists
