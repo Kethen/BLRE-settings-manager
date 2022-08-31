@@ -37,12 +37,11 @@ static void saveProfileSettings(UFoxProfileSettings*);
 
 static void loadSettings(UObject*);
 
+static void backupCrosshairDefaults();
 static void backupProfileDefaults(UFoxProfileSettings*);
 static void backupKeybindDefaults(AFoxPC*);
 static void restoreDefaults(AFoxPC*);
 
-static void dumpUEKeybinds(AFoxPC*);
-static void dumpUEProfileSettings(UFoxProfileSettingsPC*);
 
 static std::string getOutputPath();
 
@@ -94,6 +93,11 @@ struct keybindBackupEntry {
     char alternate[sizeof(FName)];
 };
 
+
+char crosshairNeutralDefault[sizeof(FString)];
+char crosshairFriendlyDefault[sizeof(FString)];
+char crosshairEnemyInRangeDefault[sizeof(FString)];
+char crosshairEnemyOutRangeDefault[sizeof(FString)];
 static keybindCacheEntry keybindCache[sizeof(command_list) / sizeof(char*)];
 static bool keybindCachePopulated = false;
 static bool settingsModified = false;
@@ -154,6 +158,7 @@ extern "C" __declspec(dllexport) void ModuleThread()
     eventManager->RegisterHandler({
     Events::ID("FoxProfileSettingsPC", "SetToDefaults"),
         [=](Events::Info info) {
+            backupCrosshairDefaults();
             backupProfileDefaults((UFoxProfileSettings*)info.Object);
             loadProfileSettings((UFoxProfileSettings*)info.Object, true);
             // items that gets overlayed during SetToDefaults
@@ -248,17 +253,6 @@ extern "C" __declspec(dllexport) void ModuleThread()
         true
         });
     logDebug("registered handler for event listing");
-#endif
-    // dumping keybinds
-#if 0
-    eventManager->RegisterHandler({
-        Events::ID("FoxPC", "OnReadProfileSettingsComplete"),
-        [=](Events::Info info) {
-            dumpUEKeybinds((AFoxPC *)info.Object);
-        },
-        true
-        });
-    logDebug("registered handler for event FoxPC OnReadProfileSettingsComplete");
 #endif
 }
 
@@ -483,9 +477,9 @@ static void loadKeyBindings(AFoxPC* object) {
         return;
     }
 
-    TArray<UFoxDataProvider_KeyBindings *> bindings = object->GetMenuItemsDataStore()->eventGetKeyBindingProviders();
+    TArray<UUIResourceDataProvider*> bindings = object->GetMenuItemsDataStore()->KeyBindingProviders;
     for (int i = 0;i < bindings.Num();i++) {
-        UFoxDataProvider_KeyBindings* entry = bindings(i);
+        UFoxDataProvider_KeyBindings *entry = (UFoxDataProvider_KeyBindings *)bindings(i);
         const char* command = entry->CmdName.ToChar();
         for (int j = 0;j < sizeof(command_list) / sizeof(char*);j++) {
             if (strcmp(command, command_list[j]) == 0) {
@@ -509,37 +503,26 @@ static void loadKeyBindings(AFoxPC* object) {
         free((void*)command);
     }
 
-#if 0
-    // no good timing to do this
-    TArray<FKeyBind> &keybinds = object->MyFoxInput->Bindings;
-    for (int i = 0;i < keybinds.Num(); i++) {
-        FKeyBind &entry = keybinds(i);
-        const char* command = entry.Command.ToChar();
-        for (int j = 0; j < sizeof(command_menu_map) / sizeof(char*); j++) {
-            if (strcmp(command, command_menu_map[j]) == 0) {
-                try {
-                    std::string primary = inputJson[command]["primary"];
-                    std::string secondary = inputJson[command]["alternate"];
-                    logDebug(std::format("binding {0} to {1} and {2}", command, primary, secondary));
-                    FName primaryKey(primary.c_str());
-                    FName secondaryKey(secondary.c_str());
-                    entry.Name = primaryKey;
-                    entry.SecondaryName = secondaryKey;
-                }
-                catch (json::exception e) {
-                    logError("unexpected format in " + outputPath + keybinding_file);
-                    logError(e.what());
-                    free((void*)command);
-                    return;
-                }
-                break;
-            }
-        }
-        free((void*)command);
-    }
-#endif
     keybindingsLoaded = true;
     logDebug("finished loading keybinds");
+}
+
+static void substituteCrosshairColor(UFoxUI *uiDefaultClass, FString &defaultCrosshair, int crosshairIndex){
+    const char *defaultCrosshairName;
+    const char *targetCrosshairName;
+    if(crosshairIndex != -1 && crosshairIndex < uiDefaultClass->CrosshairColors.Num()){
+        defaultCrosshairName = defaultCrosshair.ToChar();
+        FString &targetCrosshair = uiDefaultClass->CrosshairColors(crosshairIndex).Name;
+        targetCrosshairName = targetCrosshair.ToChar();
+        if(strcmp(defaultCrosshairName, targetCrosshairName) != 0){
+            logDebug(std::format("changing crosshair color from {0} to {1}", defaultCrosshairName, targetCrosshairName));
+            memcpy(&defaultCrosshair, &targetCrosshair, sizeof(FString));
+        }
+        free((void *)defaultCrosshairName);
+        free((void *)targetCrosshairName);
+    }else{
+        logError(std::format("crosshair index {0} is out of bound, max index is {1}", crosshairIndex, uiDefaultClass->CrosshairColors.Num() - 1));
+    }
 }
 
 static void loadSettings(UObject* object) {
@@ -555,6 +538,10 @@ static void loadSettings(UObject* object) {
 
 
 static void loadProfileSettings(UFoxProfileSettings* object, bool asDefault = false) {
+    int crosshairNeutral = -1;
+    int crosshairFriendly = -1;
+    int crosshairEnemyInRange = -1;
+    int crosshairEnemyOutRange = -1;
     if (asDefault) {
         logDebug("loading UE3 online profile as default");
     }
@@ -627,11 +614,23 @@ static void loadProfileSettings(UFoxProfileSettings* object, bool asDefault = fa
                 }
             }
             if (!found) {
-#if 0
-                // insertion during blocked processing will block the game it seems
-                logDebug(std::format("existing entry with ESettingsDataType::{0} and id {1} not found, adding", entry.ProfileSetting.Data.Type, entry.ProfileSetting.PropertyId));
-                target->Add(entry);
-#endif
+                logDebug(std::format("existing entry with ESettingsDataType::{0} and id {1} not found", entry.ProfileSetting.Data.Type, entry.ProfileSetting.PropertyId));
+            }
+
+            // save crosshair colors for later
+            switch(entry.ProfileSetting.PropertyId){
+            case 107:
+                crosshairNeutral = entry.ProfileSetting.Data.Value1;
+                break;
+            case 108:
+                crosshairFriendly = entry.ProfileSetting.Data.Value1;
+                break;
+            case 109:
+                crosshairEnemyInRange = entry.ProfileSetting.Data.Value1;
+                break;
+            case 110:
+                crosshairEnemyOutRange = entry.ProfileSetting.Data.Value1;
+                break;
             }
         }
         catch (json::exception e) {
@@ -642,55 +641,13 @@ static void loadProfileSettings(UFoxProfileSettings* object, bool asDefault = fa
         i++;
     }
 
-#if 0
-    // sadly the getters and setters breaks the object
-    for (int i = 0;i < object->ProfileSettingIds.Num();i++) {
-        int id = object->ProfileSettingIds(i);
-        try {
-            std::string type = jsonIn[std::to_string(id).c_str()]["type"];
-            FName refName = object->GetProfileSettingName(id);
-            const char* refNameStr = refName.GetName();
+    // crosshair color
+    UFoxUI *uiDefaultClass = UObject::GetInstanceOf<UFoxUI>(true);
+    substituteCrosshairColor(uiDefaultClass, uiDefaultClass->CrosshairDefaultNeutralColor, crosshairNeutral);
+    substituteCrosshairColor(uiDefaultClass, uiDefaultClass->CrosshairDefaultFriendlyColor, crosshairFriendly);
+    substituteCrosshairColor(uiDefaultClass, uiDefaultClass->CrosshairDefaultEnemyInRangeColor, crosshairEnemyInRange);
+    substituteCrosshairColor(uiDefaultClass, uiDefaultClass->CrosshairDefaultEnemyOutRangeColor, crosshairEnemyOutRange);
 
-            if (type.compare("int") == 0) {
-                int valueInt = jsonIn[std::to_string(id).c_str()]["value"];
-                if (object->SetProfileSettingValueInt(id, valueInt)) {
-                    logDebug(std::format("restored ({0}) ({1}) to ({2}) as int", id, refNameStr, valueInt));
-                }
-                else {
-                    logError(std::format("failed to restore ({0}) ({1}) to ({2}) as int", id, refNameStr, valueInt));
-                }
-            }
-            else if (type.compare("float") == 0) {
-                float valueFloat = jsonIn[std::to_string(id).c_str()]["value"];
-                if (object->SetProfileSettingValueFloat(id, valueFloat)) {
-                    logDebug(std::format("restored ({0}) ({1}) to ({2}) as float", id, refNameStr, valueFloat));
-                }
-                else {
-                    logError(std::format("failed to restore ({0}) ({1}) to ({2}) as float", id, refNameStr, valueFloat));
-                }
-            }
-            else if (type.compare("name") == 0 || type.compare("string") == 0) {
-                std::string value = jsonIn[std::to_string(id).c_str()]["value"];
-                object->AddSettingInt(id);
-                FString valueFString(value.c_str());
-                if (object->SetProfileSettingValue(id, &valueFString)) {
-                    logDebug(std::format("restored ({0}) ({1}) to ({2}) as string", id, refNameStr, value));
-                }
-                else {
-                    logError(std::format("failed to restore ({0}) ({1}) to ({2}) as string", id, refNameStr, value));
-                }
-            }
-            else {
-                logError("unknown type " + type);
-            }
-        }
-        catch (json::exception e) {
-            logError(std::format("failed to restore ({0}) with a json parsing exception", id));
-            logError("unexpected format in " + inputPath + profile_file);
-            logError(e.what());
-        }
-    }
-#endif
     profileSettingsLoaded = true;
     logDebug("profile settings loaded");
 }
@@ -744,66 +701,24 @@ static void saveProfileSettings(UFoxProfileSettings* object) {
         jsonOut[j]["ProfileSetting"]["Data"]["Type"] = entry.ProfileSetting.Data.Type;
         j++;
     }
-#if 0
-    // this allows one save, then the profile can no longer be accessed this way??
-    for (int i = 0;i < object->ProfileSettingIds.Num();i++) {
-        int id = object->ProfileSettingIds(i);
-
-        FName refName = object->GetProfileSettingName(id);
-        const char* refNameStr = refName.GetName();
-        int valueInt;
-        float valueFloat;
-        if (object->GetProfileSettingValueInt(id, &valueInt)) {
-            logDebug(std::format("saving ({0}) ({1}) ({2}) as int", id, refNameStr, valueInt));
-            jsonOut[std::to_string(id).c_str()]["value"] = valueInt;
-            jsonOut[std::to_string(id).c_str()]["type"] = "int";
-            jsonOut[std::to_string(id).c_str()]["reference name"] = refNameStr;
-        }
-        else if(object->GetProfileSettingValueFloat(id, &valueFloat)) {
-            logDebug(std::format("saving ({0}) ({1}) ({2}) as float", id, refNameStr, valueFloat));
-            jsonOut[std::to_string(id).c_str()]["value"] = valueFloat;
-            jsonOut[std::to_string(id).c_str()]["type"] = "float";
-            jsonOut[std::to_string(id).c_str()]["reference name"] = refNameStr;
-        }
-        else{
-            FName valueFName = object->GetProfileSettingValueName(id);
-            const char* name = valueFName.GetName();
-            if(strcmp(name, "None") != 0){
-                logDebug(std::format("saving ({0}) ({1}) ({2}) as name", id, refNameStr, name));
-                jsonOut[std::to_string(id).c_str()]["value"] = name;
-                jsonOut[std::to_string(id).c_str()]["type"] = "name";
-                jsonOut[std::to_string(id).c_str()]["reference name"] = refNameStr;
-            }
-            else {
-#if 0
-                FString valueFString;
-                if (object->GetProfileSettingValue(id, -1, &valueFString)) {
-                    const char* string = valueFString.ToChar();
-                    if (strcmp(string, "None") != 0) {
-                        logDebug(std::format("saving ({0}) ({1}) ({2}) as string", id, refNameStr, string));
-                        jsonOut[std::to_string(id).c_str()]["value"] = string;
-                        jsonOut[std::to_string(id).c_str()]["type"] = "string";
-                        jsonOut[std::to_string(id).c_str()]["reference name"] = refNameStr;
-                    }
-                    else {
-                        logError(std::format("failed saving ({0}) ({1}), (None) string)", id, refNameStr));
-                    }
-                    free((void*)string);
-                }
-                else {
-                    logError(std::format("failed saving ({0}) ({1}))", id, refNameStr));
-                }
-#else
-                logError(std::format("failed saving ({0}) ({1}))", id, refNameStr));
-#endif
-                #
-            }
-        }
-
-    }
-#endif 
     output << jsonOut.dump(4) << std::endl;
     output.close();
+}
+
+static void backupCrosshairDefaults(){
+    UFoxUI *uiDefaultClass = UObject::GetInstanceOf<UFoxUI>(true);
+    memcpy(crosshairNeutralDefault, &(uiDefaultClass->CrosshairDefaultNeutralColor), sizeof(FString));
+    memcpy(crosshairFriendlyDefault, &(uiDefaultClass->CrosshairDefaultFriendlyColor), sizeof(FString));
+    memcpy(crosshairEnemyInRangeDefault, &(uiDefaultClass->CrosshairDefaultEnemyInRangeColor), sizeof(FString));
+    memcpy(crosshairEnemyOutRangeDefault, &(uiDefaultClass->CrosshairDefaultEnemyOutRangeColor), sizeof(FString));
+}
+
+static void restoreCrosshairDefaults(){
+    UFoxUI *uiDefaultClass = UObject::GetInstanceOf<UFoxUI>(true);
+    memcpy(&(uiDefaultClass->CrosshairDefaultNeutralColor), crosshairNeutralDefault, sizeof(FString));
+    memcpy(&(uiDefaultClass->CrosshairDefaultFriendlyColor), crosshairFriendlyDefault, sizeof(FString));
+    memcpy(&(uiDefaultClass->CrosshairDefaultEnemyInRangeColor), crosshairEnemyInRangeDefault, sizeof(FString));
+    memcpy(&(uiDefaultClass->CrosshairDefaultEnemyOutRangeColor), crosshairEnemyOutRangeDefault, sizeof(FString));
 }
 
 static void backupKeybindDefaults(AFoxPC* object) {
@@ -879,58 +794,7 @@ static void restoreDefaults(AFoxPC* object) {
     if (!defaultRestored) {
         restoreKeybindDefaults(object);
         restoreProfileDefaults(object->ProfileSettings);
+        restoreCrosshairDefaults();
     }
     defaultRestored = true;
-}
-
-static void dumpUEKeybinds(AFoxPC* object) {
-    UFoxPlayerInput* inputObj = object->MyFoxInput;
-
-    for (int i = 0;i < inputObj->CommandMappings.Num();i++) {
-        FKeyBind keyBind = inputObj->CommandMappings(i);
-        const char* command = keyBind.Command.ToChar();
-        LDebug("settings-manager: keybind from CommandMappings ({0}) ({1}) ({2}) ({3})", command, keyBind.Name.GetName(), keyBind.SecondaryName.GetName(), keyBind.GamePadName.GetName());
-        free((void*)command);
-    }
-
-    for (int i = 0;i < inputObj->PreDefinedPCBindings.Num();i++) {
-        FKeyBind keyBind = inputObj->PreDefinedPCBindings(i);
-        const char* command = keyBind.Command.ToChar();
-        LDebug("settings-manager: keybind from PreDefinedPCBindings ({0}) ({1}) ({2}) ({3})", command, keyBind.Name.GetName(), keyBind.SecondaryName.GetName(), keyBind.GamePadName.GetName());
-        free((void*)command);
-    }
-
-    for (int i = 0;i < inputObj->PreDefinedControllerBindings.Num();i++) {
-        FKeyBind keyBind = inputObj->PreDefinedControllerBindings(i);
-        const char* command = keyBind.Command.ToChar();
-        LDebug("settings-manager: keybind from PreDefinedControllerBindings ({0}) ({1}) ({2}) ({3})", command, keyBind.Name.GetName(), keyBind.SecondaryName.GetName(), keyBind.GamePadName.GetName());
-        free((void*)command);
-    }
-
-    for (int i = 0;i < inputObj->ControllerBindings.Num();i++) {
-        FKeyBind keyBind = inputObj->ControllerBindings(i);
-        const char* command = keyBind.Command.ToChar();
-        LDebug("settings-manager: keybind from ControllerBindings ({0}) ({1}) ({2}) ({3})", command, keyBind.Name.GetName(), keyBind.SecondaryName.GetName(), keyBind.GamePadName.GetName());
-        free((void*)command);
-    }
-
-    for (int i = 0;i < inputObj->Bindings.Num();i++) {
-        FKeyBind keyBind = inputObj->Bindings(i);
-        const char* command = keyBind.Command.ToChar();
-        LDebug("settings-manager: keybind from Bindings ({0}) ({1}) ({2}) ({3})", command, keyBind.Name.GetName(), keyBind.SecondaryName.GetName(), keyBind.GamePadName.GetName());
-        free((void*)command);
-    }
-}
-
-static void dumpUEProfileSettings(UFoxProfileSettingsPC *object) {
-    if (object == nullptr) {
-        logDebug("profile is null");
-        return;
-    }
-    logDebug(std::format("there are {0} profile settings", object->ProfileSettings.Num()));
-    logDebug(std::format("there are {0} profile settings IDs", object->ProfileSettingIds.Num()));
-    logDebug(std::format("there are {0} profile mappings", object->ProfileMappings.Num()));
-    logDebug(std::format("there are {0} default settings", object->DefaultSettings.Num()));
-    logDebug(std::format("there are {0} owner mappings", object->OwnerMappings.Num()));
-
 }
