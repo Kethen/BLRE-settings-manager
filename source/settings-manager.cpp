@@ -120,6 +120,11 @@ static void logDebug(std::string message) {
     LFlush;
 }
 
+static void logWarn(std::string message) {
+    LWarn("settings-manager: " + message);
+    LFlush;
+}
+
 static AFoxPC* getPlayerController() {
     while (playerController == nullptr) {
         // copied from loadout manager, I don't understand why the player name "Player" is treated differently
@@ -242,13 +247,31 @@ extern "C" __declspec(dllexport) void ModuleThread()
         });
     logDebug("registered handler for event FoxUI ei_menuTransitionComplete");
 #endif
-
+    /* hack, early kill the game so that it does not crash dump later at
+    /*
+    Address=0229FE5C
+    To=0049EF51
+    From=00F97729
+    Size=28
+    Comment=foxgame-win32-shipping-patched.00F97729
+    Party=User
+    */
+#if 1
+    eventManager->RegisterHandler({
+        Events::ID("OnlineSubsystemPW", "Exit"),
+        [=](Events::Info info) {
+            logWarn("hack: exiting the game on event OnlineSubsystemPW Exit to avoid a crash");
+            exit(0);
+        },
+        true
+        });
+    logDebug("registered handler for event listing");
+#endif
     // dumping events
 #if 0
     eventManager->RegisterHandler({
         Events::ID("*", "*"),
         [=](Events::Info info) {
-            //logDebug(std::format("usable event: ({0}) ({1}) ", info.Object->GetName(), info.Function->GetName()));
         },
         true
         });
