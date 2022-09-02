@@ -265,7 +265,31 @@ extern "C" __declspec(dllexport) void ModuleThread()
         },
         true
         });
-    logDebug("registered handler for event listing");
+    logDebug("registered handler for OnlineSubsystemPW Exit");
+#endif
+	// hack, exit on quit match button press so that the player joined earlier does not get DCed
+#if 1
+    eventManager->RegisterHandler({
+        Events::ID("FoxMenuUI", "ei_QuitMatch"),
+        [=](Events::Info info) {
+            logWarn("hack: exiting the game on event FoxMenuUI ei_QuitMatch to not disconnect the player joined before you");
+            exit(0);
+        },
+        true
+        });
+    logDebug("registered handler for FoxMenuUI ei_QuitMatch");
+#endif
+	// hack, exit on idle kick so that the player joined earlier does not get DCed
+#if 1
+    eventManager->RegisterHandler({
+        Events::ID("FoxPC", "ClientKickedForIdle"),
+        [=](Events::Info info) {
+            logWarn("hack: exiting the game on event FoxPC ClientKickedForIdle to not disconnect the player joined before you");
+            exit(0);
+        },
+        true
+        });
+    logDebug("registered handler for FoxPC ClientKickedForIdle");
 #endif
     // dumping events
 #if 0
